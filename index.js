@@ -54,6 +54,30 @@ app.post("/publish-instagram", async (req, res) => {
   }
 });
 
+// JSON 안의 실제 줄바꿈을 \n으로 변환하는 함수
+function fixJsonString(str) {
+  let inString = false;
+  let result = "";
+  let i = 0;
+  while (i < str.length) {
+    const ch = str[i];
+    if (ch === '"' && (i === 0 || str[i-1] !== "\\")) {
+      inString = !inString;
+      result += ch;
+    } else if (inString && ch === "\n") {
+      result += "\\n";
+    } else if (inString && ch === "\r") {
+      result += "\\r";
+    } else if (inString && ch === "\t") {
+      result += "\\t";
+    } else {
+      result += ch;
+    }
+    i++;
+  }
+  return result;
+}
+
 // =============================================
 // 여러 사진 → AI 콘텐츠 생성
 // =============================================
@@ -189,7 +213,7 @@ ${isMultiple ? "사진 삽입 위치를 [사진1], [사진2] 등으로 표시하
   * 함께한 사람과의 추억 (200자)
   * 다음에 꼭 다시 오고 싶은 이유 (200자)
 
-반드시 아래 JSON 형식으로만 응답하세요. 마크다운 코드블록 없이 순수 JSON만 출력하세요. 줄바꿈은 \\n으로 표현하세요:
+반드시 아래 JSON 형식으로만 응답하세요. 마크다운 코드블록 없이 순수 JSON만 출력하세요. 줄바꿈은 반드시 \\n 문자열로 표현하세요. 절대 실제 줄바꿈을 사용하지 마세요:
 {"instagram":["문구1","문구2","문구3"],"threads":["문구1","문구2","문구3"],"facebook":["문구1","문구2","문구3"],"daangn":["문구1","문구2","문구3"],"naver":[{"title":"제목1","content":"본문1"},{"title":"제목2","content":"본문2"},{"title":"제목3","content":"본문3"}]}`;
 
     const response = await fetch(apiUrl, {
@@ -217,16 +241,21 @@ ${isMultiple ? "사진 삽입 위치를 [사진1], [사진2] 등으로 표시하
     // 코드블록 제거
     const cleaned = text.replace(/```json|```/g, "").trim();
 
-    // JSON 시작 위치 찾기
-    const jsonStart = cleaned.indexOf('{"instagram"');
-    const jsonStr = jsonStart >= 0 ? cleaned.slice(jsonStart) : cleaned;
-
-    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+    // JSON 추출
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       return res.status(500).json({ success: false, error: "JSON 파싱 실패: " + cleaned.substring(0, 200) });
     }
 
-    const result = JSON.parse(jsonMatch[0]);
+    // 실제 줄바꿈 → \n 변환 후 파싱
+    const fixed = fixJsonString(jsonMatch[0]);
+    let result;
+    try {
+      result = JSON.parse(fixed);
+    } catch(e) {
+      return res.status(500).json({ success: false, error: "JSON 파싱 오류: " + e.message + " | 원본: " + fixed.substring(0, 200) });
+    }
+
     const filePaths = files.map(f => f.path);
     result.imagePaths = filePaths;
     result.imageCount = imageCount;
