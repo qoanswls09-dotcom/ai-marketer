@@ -54,30 +54,6 @@ app.post("/publish-instagram", async (req, res) => {
   }
 });
 
-// JSON 안의 실제 줄바꿈을 \n으로 변환하는 함수
-function fixJsonString(str) {
-  let inString = false;
-  let result = "";
-  let i = 0;
-  while (i < str.length) {
-    const ch = str[i];
-    if (ch === '"' && (i === 0 || str[i-1] !== "\\")) {
-      inString = !inString;
-      result += ch;
-    } else if (inString && ch === "\n") {
-      result += "\\n";
-    } else if (inString && ch === "\r") {
-      result += "\\r";
-    } else if (inString && ch === "\t") {
-      result += "\\t";
-    } else {
-      result += ch;
-    }
-    i++;
-  }
-  return result;
-}
-
 // =============================================
 // 여러 사진 → AI 콘텐츠 생성
 // =============================================
@@ -95,7 +71,8 @@ app.post("/generate", upload.array("images", 10), async (req, res) => {
       }
     }));
 
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+    // gemini-2.0-flash 사용 (thinking 없음, 안정적, JSON 출력 완벽 지원)
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
 
     const imageCount = files.length;
     const isMultiple = imageCount > 1;
@@ -213,7 +190,7 @@ ${isMultiple ? "사진 삽입 위치를 [사진1], [사진2] 등으로 표시하
   * 함께한 사람과의 추억 (200자)
   * 다음에 꼭 다시 오고 싶은 이유 (200자)
 
-반드시 아래 JSON 형식으로만 응답하세요. 마크다운 코드블록 없이 순수 JSON만 출력하세요. 줄바꿈은 반드시 \\n 문자열로 표현하세요. 절대 실제 줄바꿈을 사용하지 마세요:
+아래 JSON 형식으로만 응답하세요:
 {"instagram":["문구1","문구2","문구3"],"threads":["문구1","문구2","문구3"],"facebook":["문구1","문구2","문구3"],"daangn":["문구1","문구2","문구3"],"naver":[{"title":"제목1","content":"본문1"},{"title":"제목2","content":"본문2"},{"title":"제목3","content":"본문3"}]}`;
 
     const response = await fetch(apiUrl, {
@@ -221,39 +198,51 @@ ${isMultiple ? "사진 삽입 위치를 [사진1], [사진2] 등으로 표시하
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [...imageParts, { text: prompt }] }],
-        generationConfig: { maxOutputTokens: 8192, temperature: 0.9 }
+        generationConfig: {
+          maxOutputTokens: 8192,
+          temperature: 0.9,
+          response_mime_type: "application/json"
+        }
       }),
     });
 
     const data = await response.json();
-    console.log("API 응답:", JSON.stringify(data).substring(0, 300));
+    console.log("API 응답 구조:", JSON.stringify(data).substring(0, 500));
 
     if (!data.candidates || !data.candidates[0]) {
-      return res.status(500).json({ success: false, error: JSON.stringify(data) });
+      return res.status(500).json({ success: false, error: "Gemini 응답 없음: " + JSON.stringify(data) });
     }
 
-    // thinking 모드 대응: text가 있는 parts만 합치기
-    const text = data.candidates[0].content.parts
-      .filter(p => p.text)
-      .map(p => p.text)
-      .join("");
-
-    // 코드블록 제거
-    const cleaned = text.replace(/```json|```/g, "").trim();
-
-    // JSON 추출
-    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      return res.status(500).json({ success: false, error: "JSON 파싱 실패: " + cleaned.substring(0, 200) });
+    // 응답 텍스트 추출 (가장 안전한 방식)
+    let text = "";
+    const parts = data.candidates[0].content?.parts || [];
+    for (const part of parts) {
+      if (part.text) text += part.text;
     }
 
-    // 실제 줄바꿈 → \n 변환 후 파싱
-    const fixed = fixJsonString(jsonMatch[0]);
+    console.log("추출된 텍스트:", text.substring(0, 300));
+
+    if (!text) {
+      return res.status(500).json({ success: false, error: "응답 텍스트가 비어있습니다." });
+    }
+
+    // JSON 파싱
     let result;
     try {
-      result = JSON.parse(fixed);
+      // response_mime_type이 json이면 바로 파싱 가능
+      result = JSON.parse(text);
     } catch(e) {
-      return res.status(500).json({ success: false, error: "JSON 파싱 오류: " + e.message + " | 원본: " + fixed.substring(0, 200) });
+      // 혹시 마크다운 감싸져 있으면 제거 후 재시도
+      const cleaned = text.replace(/```json|```/g, "").trim();
+      const match = cleaned.match(/\{[\s\S]*\}/);
+      if (!match) {
+        return res.status(500).json({ success: false, error: "JSON 없음: " + cleaned.substring(0, 200) });
+      }
+      try {
+        result = JSON.parse(match[0]);
+      } catch(e2) {
+        return res.status(500).json({ success: false, error: "파싱 실패: " + e2.message });
+      }
     }
 
     const filePaths = files.map(f => f.path);
@@ -314,7 +303,6 @@ app.post("/create-reels", async (req, res) => {
   }
 });
 
-// 배포 환경에서 /tmp/videos 파일 서빙
 app.get("/video/:filename", (req, res) => {
   const filePath = path.join(VIDEO_DIR, req.params.filename);
   if (fs.existsSync(filePath)) {
