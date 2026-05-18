@@ -84,7 +84,7 @@ app.post("/generate", upload.array("images", 10), async (req, res) => {
       }
     }));
 
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${process.env.GEMINI_API_KEY}`;
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
 
     const imageCount = files.length;
     const isMultiple = imageCount > 1;
