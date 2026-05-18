@@ -36,9 +36,6 @@ const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL || "https://hook.eu1.make.
 app.post("/publish-instagram", async (req, res) => {
   try {
     const { type, url, caption } = req.body;
-    // type: "photo" 또는 "reel"
-    // url: 공개 접근 가능한 이미지/영상 URL
-    // caption: 게시글 문구
 
     if (!url || !caption) {
       return res.status(400).json({ success: false, error: "url과 caption이 필요합니다." });
@@ -76,7 +73,6 @@ app.post("/generate", upload.array("images", 10), async (req, res) => {
       return res.status(400).json({ success: false, error: "사진을 올려주세요." });
     }
 
-    // 모든 이미지를 base64로 변환
     const imageParts = files.map(file => ({
       inline_data: {
         mime_type: file.mimetype,
@@ -202,7 +198,7 @@ ${isMultiple ? "사진 삽입 위치를 [사진1], [사진2] 등으로 표시하
   * 함께한 사람과의 추억 (200자)
   * 다음에 꼭 다시 오고 싶은 이유 (200자)
 
-반드시 아래 JSON 형식으로만 응답하세요. 줄바꿈은 \\n으로 표현하세요:
+반드시 아래 JSON 형식으로만 응답하세요. 마크다운 코드블록 없이 순수 JSON만 출력하세요. 줄바꿈은 \\n으로 표현하세요:
 {"instagram":["문구1","문구2","문구3"],"threads":["문구1","문구2","문구3"],"facebook":["문구1","문구2","문구3"],"daangn":["문구1","문구2","문구3"],"naver":[{"title":"제목1","content":"본문1"},{"title":"제목2","content":"본문2"},{"title":"제목3","content":"본문3"}]}`;
 
     const response = await fetch(apiUrl, {
@@ -231,14 +227,16 @@ ${isMultiple ? "사진 삽입 위치를 [사진1], [사진2] 등으로 표시하
     }
 
     const text = data.candidates[0].content.parts[0].text;
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
+
+    // 코드블록 제거 후 JSON 파싱
+    const cleaned = text.replace(/```json|```/g, "").trim();
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      return res.status(500).json({ success: false, error: "JSON 파싱 실패: " + text });
+      return res.status(500).json({ success: false, error: "JSON 파싱 실패: " + cleaned });
     }
 
     const result = JSON.parse(jsonMatch[0]);
 
-    // 파일 경로 목록 저장 (릴스용)
     const filePaths = files.map(f => f.path);
     result.imagePaths = filePaths;
     result.imageCount = imageCount;
@@ -284,10 +282,8 @@ app.post("/create-reels", async (req, res) => {
         .run();
     });
 
-    // 임시 업로드 파일 삭제
     imagePaths.forEach(p => { try { fs.unlinkSync(p); } catch(e) {} });
 
-    // 배포 환경에서는 공개 URL로 변환
     const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
     const videoUrl = process.env.NODE_ENV === "production"
       ? `${BASE_URL}/video/${filename}`
