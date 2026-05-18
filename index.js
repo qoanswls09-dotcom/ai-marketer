@@ -60,8 +60,8 @@ app.post("/generate", upload.array("images", 10), async (req, res) => {
     const imageCount = files.length;
     const isMultiple = imageCount > 1;
 
-    // gemini-2.0-flash: thinking 없음, JSON 안정적
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+    // gemini-2.5-flash: thinking 비활성화 + JSON 모드
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
 
     const prompt = `당신은 SNS 바이럴 마케팅 전문가입니다. 총 ${imageCount}장의 사진을 분석하여 콘텐츠를 작성하세요.
 ${isMultiple ? `사진 ${imageCount}장이므로 스토리 있는 콘텐츠로 구성하세요.` : ""}
@@ -72,7 +72,7 @@ ${isMultiple ? `사진 ${imageCount}장이므로 스토리 있는 콘텐츠로 �
 ★ 당근마켓 (각 400자 이상): 동네 친구형, 신뢰 스토리형, 혜택 강조형.
 ★ 네이버 블로그 (제목+본문 각 1500자 이상): 상세 리뷰형, 추천 가이드형, 스토리 리뷰형.
 
-아래 JSON 형식으로만 응답하세요. 다른 텍스트 없이 JSON만:
+아래 JSON 형식으로만 응답하세요:
 {"instagram":["문구1","문구2","문구3"],"threads":["문구1","문구2","문구3"],"facebook":["문구1","문구2","문구3"],"daangn":["문구1","문구2","문구3"],"naver":[{"title":"제목1","content":"본문1"},{"title":"제목2","content":"본문2"},{"title":"제목3","content":"본문3"}]}`;
 
     const response = await fetch(apiUrl, {
@@ -84,6 +84,10 @@ ${isMultiple ? `사진 ${imageCount}장이므로 스토리 있는 콘텐츠로 �
           maxOutputTokens: 8192,
           temperature: 0.9,
           response_mime_type: "application/json"
+        },
+        // thinking 완전 비활성화 → 깔끔한 JSON만 반환
+        thinkingConfig: {
+          thinkingBudget: 0
         }
       }),
     });
@@ -100,7 +104,7 @@ ${isMultiple ? `사진 ${imageCount}장이므로 스토리 있는 콘텐츠로 �
       .map(p => p.text)
       .join("");
 
-    console.log("추출 텍스트:", text.substring(0, 200));
+    console.log("추출 텍스트:", text.substring(0, 300));
 
     if (!text) return res.status(500).json({ success: false, error: "응답 텍스트 없음" });
 
@@ -108,19 +112,17 @@ ${isMultiple ? `사진 ${imageCount}장이므로 스토리 있는 콘텐츠로 �
     try {
       result = JSON.parse(text);
     } catch (e) {
-      // 코드블록 제거 후 재시도
       const cleaned = text.replace(/```json|```/g, "").trim();
       const match = cleaned.match(/\{[\s\S]*\}/);
-      if (!match) return res.status(500).json({ success: false, error: "JSON 없음. 원문: " + cleaned.substring(0, 200) });
+      if (!match) return res.status(500).json({ success: false, error: "JSON 없음: " + cleaned.substring(0, 200) });
       try {
         result = JSON.parse(match[0]);
       } catch (e2) {
-        return res.status(500).json({ success: false, error: "파싱실패: " + e2.message + " | " + match[0].substring(0, 100) });
+        return res.status(500).json({ success: false, error: "파싱실패: " + e2.message });
       }
     }
 
-    // 필수 키 확인
-    if (!result.instagram || !result.threads || !result.facebook || !result.daangn || !result.naver) {
+    if (!result.instagram || !result.naver) {
       return res.status(500).json({ success: false, error: "응답 구조 오류: " + JSON.stringify(Object.keys(result)) });
     }
 
@@ -137,7 +139,7 @@ ${isMultiple ? `사진 ${imageCount}장이므로 스토리 있는 콘텐츠로 �
 
 app.post("/create-reels", async (req, res) => {
   try {
-    const { imagePaths, caption } = req.body;
+    const { imagePaths } = req.body;
     if (!imagePaths || imagePaths.length === 0) return res.status(400).json({ success: false, error: "사진이 없습니다." });
 
     const filename = `reels_${Date.now()}.mp4`;
