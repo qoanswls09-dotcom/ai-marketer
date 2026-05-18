@@ -60,7 +60,6 @@ app.post("/generate", upload.array("images", 10), async (req, res) => {
     const imageCount = files.length;
     const isMultiple = imageCount > 1;
 
-    // gemini-2.5-flash: thinking 비활성화 + JSON 모드
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
 
     const prompt = `당신은 SNS 바이럴 마케팅 전문가입니다. 총 ${imageCount}장의 사진을 분석하여 콘텐츠를 작성하세요.
@@ -84,10 +83,6 @@ ${isMultiple ? `사진 ${imageCount}장이므로 스토리 있는 콘텐츠로 �
           maxOutputTokens: 8192,
           temperature: 0.9,
           response_mime_type: "application/json"
-        },
-        // thinking 완전 비활성화 → 깔끔한 JSON만 반환
-        thinking_config: {
-          thinkingBudget: 0
         }
       }),
     });
