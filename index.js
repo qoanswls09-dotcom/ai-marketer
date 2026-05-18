@@ -28,6 +28,30 @@ app.use(express.json());
 
 const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL || "https://hook.eu1.make.com/k11ssrej9q80xb81b2o9r7e1rqu1kq";
 
+// JSON 문자열 안의 실제 줄바꿈을 \n으로 변환하는 안전한 파서
+function safeParseJSON(text) {
+  try { return JSON.parse(text); } catch(e) {}
+  let cleaned = text.replace(/```json\n?|```\n?/g, "").trim();
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start === -1 || end === -1) return null;
+  let jsonStr = cleaned.slice(start, end + 1);
+  let fixed = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < jsonStr.length; i++) {
+    const ch = jsonStr[i];
+    if (escaped) { fixed += ch; escaped = false; }
+    else if (ch === "\\") { fixed += ch; escaped = true; }
+    else if (ch === '"') { inString = !inString; fixed += ch; }
+    else if (inString && ch === "\n") { fixed += "\\n"; }
+    else if (inString && ch === "\r") { fixed += "\\r"; }
+    else if (inString && ch === "\t") { fixed += "\\t"; }
+    else { fixed += ch; }
+  }
+  try { return JSON.parse(fixed); } catch(e) { return null; }
+}
+
 app.post("/publish-instagram", async (req, res) => {
   try {
     const { type, url, caption } = req.body;
@@ -91,7 +115,7 @@ ${isMultiple ? `사진 ${imageCount}장이므로 스토리 있는 콘텐츠로 �
     console.log("Gemini 응답:", JSON.stringify(data).substring(0, 500));
 
     if (!data.candidates?.[0]?.content?.parts) {
-      return res.status(500).json({ success: false, error: "Gemini 응답 오류: " + JSON.stringify(data).substring(0, 300) });
+      return res.status(500).json({ success: false, error: "Gemini 오류: " + JSON.stringify(data).substring(0, 300) });
     }
 
     const text = data.candidates[0].content.parts
@@ -99,22 +123,14 @@ ${isMultiple ? `사진 ${imageCount}장이므로 스토리 있는 콘텐츠로 �
       .map(p => p.text)
       .join("");
 
-    console.log("추출 텍스트:", text.substring(0, 300));
+    console.log("원본 텍스트:", text.substring(0, 300));
 
     if (!text) return res.status(500).json({ success: false, error: "응답 텍스트 없음" });
 
-    let result;
-    try {
-      result = JSON.parse(text);
-    } catch (e) {
-      const cleaned = text.replace(/```json|```/g, "").trim();
-      const match = cleaned.match(/\{[\s\S]*\}/);
-      if (!match) return res.status(500).json({ success: false, error: "JSON 없음: " + cleaned.substring(0, 200) });
-      try {
-        result = JSON.parse(match[0]);
-      } catch (e2) {
-        return res.status(500).json({ success: false, error: "파싱실패: " + e2.message });
-      }
+    const result = safeParseJSON(text);
+
+    if (!result) {
+      return res.status(500).json({ success: false, error: "JSON 파싱 실패. 원본: " + text.substring(0, 200) });
     }
 
     if (!result.instagram || !result.naver) {
