@@ -226,7 +226,7 @@ ${isMultiple ? "사진 삽입 위치를 [사진1], [사진2] 등으로 표시하
       return res.status(500).json({ success: false, error: JSON.stringify(data) });
     }
 
-    const text = data.candidates[0].content.parts.map(p => p.text || "").join("");
+    const text = data.candidates[0].content.parts.filter(p => p.text).map(p => p.text).join("");
 
     // 코드블록 제거 후 JSON 파싱
     const cleaned = text.replace(/```json|```/g, "").trim();
