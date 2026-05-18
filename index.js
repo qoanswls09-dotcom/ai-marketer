@@ -10,7 +10,6 @@ require("dotenv").config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 배포 환경에서는 /tmp 사용 (Railway 등)
 const UPLOAD_DIR = process.env.NODE_ENV === "production" ? "/tmp/uploads" : "uploads";
 const VIDEO_DIR = process.env.NODE_ENV === "production" ? "/tmp/videos" : "public/videos";
 
@@ -27,30 +26,23 @@ const upload = multer({ storage });
 app.use(express.static("public"));
 app.use(express.json());
 
-// Make.com Webhook URL
 const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL || "https://hook.eu1.make.com/k11ssrej9q80xb81b2o9r7e1rqu1kq";
 
 // =============================================
-// Instagram 자동 발행 (Make.com Webhook 연동)
+// Instagram 자동 발행
 // =============================================
 app.post("/publish-instagram", async (req, res) => {
   try {
     const { type, url, caption } = req.body;
-
     if (!url || !caption) {
       return res.status(400).json({ success: false, error: "url과 caption이 필요합니다." });
     }
-
-    const payload = type === "reel"
-      ? { video_url: url, caption }
-      : { image_url: url, caption };
-
+    const payload = type === "reel" ? { video_url: url, caption } : { image_url: url, caption };
     const response = await fetch(MAKE_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-
     if (response.ok) {
       res.json({ success: true, message: "Instagram 발행 요청이 완료됐어요!" });
     } else {
@@ -58,7 +50,6 @@ app.post("/publish-instagram", async (req, res) => {
       res.status(500).json({ success: false, error: "Make.com 오류: " + errText });
     }
   } catch (error) {
-    console.error("발행 오류:", error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -205,16 +196,8 @@ ${isMultiple ? "사진 삽입 위치를 [사진1], [사진2] 등으로 표시하
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [{
-          parts: [
-            ...imageParts,
-            { text: prompt }
-          ]
-        }],
-        generationConfig: {
-          maxOutputTokens: 8192,
-          temperature: 0.9
-        }
+        contents: [{ parts: [...imageParts, { text: prompt }] }],
+        generationConfig: { maxOutputTokens: 8192, temperature: 0.9 }
       }),
     });
 
@@ -222,21 +205,28 @@ ${isMultiple ? "사진 삽입 위치를 [사진1], [사진2] 등으로 표시하
     console.log("API 응답:", JSON.stringify(data).substring(0, 300));
 
     if (!data.candidates || !data.candidates[0]) {
-      console.error("오류:", JSON.stringify(data));
       return res.status(500).json({ success: false, error: JSON.stringify(data) });
     }
 
-    const text = data.candidates[0].content.parts.filter(p => p.text).map(p => p.text).join("");
+    // thinking 모드 대응: text가 있는 parts만 합치기
+    const text = data.candidates[0].content.parts
+      .filter(p => p.text)
+      .map(p => p.text)
+      .join("");
 
-    // 코드블록 제거 후 JSON 파싱
+    // 코드블록 제거
     const cleaned = text.replace(/```json|```/g, "").trim();
-    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+
+    // JSON 시작 위치 찾기
+    const jsonStart = cleaned.indexOf('{"instagram"');
+    const jsonStr = jsonStart >= 0 ? cleaned.slice(jsonStart) : cleaned;
+
+    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      return res.status(500).json({ success: false, error: "JSON 파싱 실패: " + cleaned });
+      return res.status(500).json({ success: false, error: "JSON 파싱 실패: " + cleaned.substring(0, 200) });
     }
 
     const result = JSON.parse(jsonMatch[0]);
-
     const filePaths = files.map(f => f.path);
     result.imagePaths = filePaths;
     result.imageCount = imageCount;
@@ -267,7 +257,6 @@ app.post("/create-reels", async (req, res) => {
       imagePaths.forEach(imgPath => {
         command.input(imgPath).inputOptions([`-loop 1`, `-t ${duration}`]);
       });
-
       command
         .complexFilter([
           imagePaths.map((_, i) =>
