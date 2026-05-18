@@ -86,7 +86,7 @@ ${isMultiple ? `사진 ${imageCount}장이므로 스토리 있는 콘텐츠로 �
           response_mime_type: "application/json"
         },
         // thinking 완전 비활성화 → 깔끔한 JSON만 반환
-        thinkingConfig: {
+        thinking_config: {
           thinkingBudget: 0
         }
       }),
