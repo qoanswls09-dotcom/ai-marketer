@@ -170,7 +170,7 @@ document.getElementById('reels-wrap').style.display='block';
 document.getElementById('loading').style.display='none';
 document.getElementById('results').style.display='block';
 }else{
-alert('오류: '+data.error);
+console.error('서버응답:', data); alert('오류: '+(data.error || JSON.stringify(data)));
 }
 }catch(e){
 alert('서버 연결 오류.');
