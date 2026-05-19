@@ -4,6 +4,7 @@ const path = require("path");
 const fs = require("fs");
 const ffmpeg = require("fluent-ffmpeg");
 const ffmpegInstaller = require("@ffmpeg-installer/ffmpeg");
+const { jsonrepair } = require("jsonrepair");
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 require("dotenv").config();
 
@@ -28,8 +29,7 @@ app.use(express.json());
 
 const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL || "https://hook.eu1.make.com/k11ssrej9q80xb81b2o9r7e1rqu1kq";
 
-// JSON 문자열 안의 실제 줄바꿈을 \n으로 변환하는 안전한 파서
-function safeParseJSON(text) {
+function robustParseJSON(text) {
   // 1단계: 코드블록 제거
   let cleaned = text.replace(/```json\n?|```\n?/g, "").trim();
 
@@ -39,38 +39,15 @@ function safeParseJSON(text) {
   if (start === -1 || end === -1) return null;
   let jsonStr = cleaned.slice(start, end + 1);
 
-  // 3단계: 직접 파싱 시도
+  // 3단계: 직접 파싱
   try { return JSON.parse(jsonStr); } catch(e) {}
 
-  // 4단계: 문자열 안의 실제 줄바꿈 → \n 변환 후 재시도
-  let fixed = "";
-  let inString = false;
-  let escaped = false;
-  for (let i = 0; i < jsonStr.length; i++) {
-    const ch = jsonStr[i];
-    if (escaped) {
-      fixed += ch;
-      escaped = false;
-    } else if (ch === "\\") {
-      fixed += ch;
-      escaped = true;
-    } else if (ch === '"') {
-      inString = !inString;
-      fixed += ch;
-    } else if (inString && ch === "\n") {
-      fixed += "\\n";
-    } else if (inString && ch === "\r") {
-      // \r 무시 (Windows 줄바꿈 처리)
-    } else if (inString && ch === "\t") {
-      fixed += "\\t";
-    } else {
-      fixed += ch;
-    }
-  }
-
-  try { return JSON.parse(fixed); } catch(e) {
-    console.error("safeParseJSON 실패:", e.message);
-    console.error("fixed 앞부분:", fixed.substring(0, 300));
+  // 4단계: jsonrepair로 손상된 JSON 복구 (따옴표 미이스케이프, 실제 줄바꿈 등 모두 처리)
+  try {
+    const repaired = jsonrepair(jsonStr);
+    return JSON.parse(repaired);
+  } catch(e) {
+    console.error("jsonrepair 실패:", e.message);
     return null;
   }
 }
@@ -107,7 +84,6 @@ app.post("/generate", upload.array("images", 10), async (req, res) => {
     const imageCount = files.length;
     const isMultiple = imageCount > 1;
 
-    // ★ response_mime_type 제거 → thinking 모드와 충돌 방지
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
 
     const prompt = `당신은 SNS 바이럴 마케팅 전문가입니다. 총 ${imageCount}장의 사진을 분석하여 콘텐츠를 작성하세요.
@@ -119,7 +95,7 @@ ${isMultiple ? `사진 ${imageCount}장이므로 스토리 있는 콘텐츠로 �
 ★ 당근마켓 (각 400자 이상): 동네 친구형, 신뢰 스토리형, 혜택 강조형.
 ★ 네이버 블로그 (제목+본문 각 1500자 이상): 상세 리뷰형, 추천 가이드형, 스토리 리뷰형.
 
-반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트 없이 JSON만 출력하세요:
+반드시 아래 JSON 형식으로만 응답하세요:
 {"instagram":["문구1","문구2","문구3"],"threads":["문구1","문구2","문구3"],"facebook":["문구1","문구2","문구3"],"daangn":["문구1","문구2","문구3"],"naver":[{"title":"제목1","content":"본문1"},{"title":"제목2","content":"본문2"},{"title":"제목3","content":"본문3"}]}`;
 
     const response = await fetch(apiUrl, {
@@ -127,32 +103,27 @@ ${isMultiple ? `사진 ${imageCount}장이므로 스토리 있는 콘텐츠로 �
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [...imageParts, { text: prompt }] }],
-        generationConfig: {
-          maxOutputTokens: 8192,
-          temperature: 0.9
-          // ★ response_mime_type 제거 - thinking 모드와 충돌함
-        }
+        generationConfig: { maxOutputTokens: 8192, temperature: 0.9 }
       }),
     });
 
     const data = await response.json();
-    console.log("Gemini 응답 구조:", JSON.stringify(data).substring(0, 500));
+    console.log("Gemini 응답:", JSON.stringify(data).substring(0, 500));
 
     if (!data.candidates?.[0]?.content?.parts) {
       return res.status(500).json({ success: false, error: "Gemini 오류: " + JSON.stringify(data).substring(0, 300) });
     }
 
-    // thinking 파트 제외하고 실제 텍스트만 합치기
     const text = data.candidates[0].content.parts
-      .filter(p => p.text && p.text.trim().length > 0)
+      .filter(p => p.text && !p.thought)
       .map(p => p.text)
       .join("");
 
-    console.log("추출 텍스트 앞부분:", text.substring(0, 300));
+    console.log("추출 텍스트:", text.substring(0, 300));
 
     if (!text) return res.status(500).json({ success: false, error: "응답 텍스트 없음" });
 
-    const result = safeParseJSON(text);
+    const result = robustParseJSON(text);
 
     if (!result) {
       return res.status(500).json({ success: false, error: "JSON 파싱 실패. 원본: " + text.substring(0, 300) });
