@@ -28,18 +28,20 @@ app.use(express.json());
 
 const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL || "https://hook.eu1.make.com/k11ssrej9q80xb81b2o9r7e1rqu1kq";
 
-// JSON 파서: 실제 줄바꿈, 코드블록 처리
 function robustParseJSON(text) {
+  // 코드블록 제거
   let cleaned = text.replace(/```json\n?|```\n?/g, "").trim();
+
+  // { } 범위 추출
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
   if (start === -1 || end === -1) return null;
   let jsonStr = cleaned.slice(start, end + 1);
 
-  // 직접 파싱
+  // 직접 파싱 시도
   try { return JSON.parse(jsonStr); } catch(e) {}
 
-  // 줄바꿈 치환 후 재시도
+  // 문자열 내부의 실제 줄바꿈 → \n 변환
   let fixed = "";
   let inString = false;
   let escaped = false;
@@ -52,8 +54,10 @@ function robustParseJSON(text) {
     else if (inString && ch === "\r") { /* skip */ }
     else { fixed += ch; }
   }
+
   try { return JSON.parse(fixed); } catch(e) {
-    console.error("파싱 최종 실패:", e.message, "| fixed 앞:", fixed.substring(0, 200));
+    console.error("파싱 실패:", e.message);
+    console.error("fixed:", fixed.substring(0, 300));
     return null;
   }
 }
@@ -111,26 +115,28 @@ ${isMultiple ? `사진 ${imageCount}장이므로 스토리 있는 콘텐츠로 �
         contents: [{ parts: [...imageParts, { text: prompt }] }],
         generationConfig: {
           maxOutputTokens: 16384,
-          temperature: 0.9,
-          response_mime_type: "application/json",
-          thinkingConfig: { thinkingBudget: 0 }  // thinking OFF → 깔끔한 JSON 반환
+          temperature: 0.9
         }
       }),
     });
 
     const data = await response.json();
-    console.log("Gemini 응답:", JSON.stringify(data).substring(0, 600));
+    console.log("Gemini 전체 응답:", JSON.stringify(data).substring(0, 800));
 
     if (!data.candidates?.[0]?.content?.parts) {
       return res.status(500).json({ success: false, error: "Gemini 오류: " + JSON.stringify(data).substring(0, 300) });
     }
 
-    const text = data.candidates[0].content.parts
+    // thought 파트 제외, 실제 텍스트만 추출
+    const parts = data.candidates[0].content.parts;
+    console.log("parts 수:", parts.length, "| 각 타입:", parts.map(p => Object.keys(p).join(",")));
+
+    const text = parts
       .filter(p => p.text && !p.thought)
       .map(p => p.text)
       .join("");
 
-    console.log("추출 텍스트:", text.substring(0, 300));
+    console.log("추출 텍스트 길이:", text.length, "| 앞부분:", text.substring(0, 200));
 
     if (!text) return res.status(500).json({ success: false, error: "응답 텍스트 없음" });
 
