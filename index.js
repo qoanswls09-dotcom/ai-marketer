@@ -28,6 +28,7 @@ app.use(express.json());
 
 const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL || "https://hook.eu1.make.com/k11ssrej9q80xb81b2o9r7e1rqu1kq";
 
+// JSON 파서: 실제 줄바꿈 + 이스케이프 안된 따옴표 처리
 function robustParseJSON(text) {
   // 코드블록 제거
   let cleaned = text.replace(/```json\n?|```\n?/g, "").trim();
@@ -38,28 +39,168 @@ function robustParseJSON(text) {
   if (start === -1 || end === -1) return null;
   let jsonStr = cleaned.slice(start, end + 1);
 
-  // 직접 파싱 시도
+  // 직접 파싱
   try { return JSON.parse(jsonStr); } catch(e) {}
 
-  // 문자열 내부의 실제 줄바꿈 → \n 변환
-  let fixed = "";
-  let inString = false;
-  let escaped = false;
-  for (let i = 0; i < jsonStr.length; i++) {
-    const ch = jsonStr[i];
-    if (escaped) { fixed += ch; escaped = false; }
-    else if (ch === "\\") { fixed += ch; escaped = true; }
-    else if (ch === '"') { inString = !inString; fixed += ch; }
-    else if (inString && ch === "\n") { fixed += "\\n"; }
-    else if (inString && ch === "\r") { /* skip */ }
-    else { fixed += ch; }
+  // JSON 구조를 완전히 재구성하는 방식으로 파싱
+  // 핵심 키들을 정규식으로 직접 추출
+  try {
+    const result = {};
+
+    // instagram 배열 추출
+    result.instagram = extractArray(jsonStr, "instagram");
+    result.threads = extractArray(jsonStr, "threads");
+    result.facebook = extractArray(jsonStr, "facebook");
+    result.daangn = extractArray(jsonStr, "daangn");
+    result.naver = extractNaverArray(jsonStr);
+
+    if (result.instagram && result.threads && result.facebook && result.daangn && result.naver) {
+      return result;
+    }
+  } catch(e) {
+    console.error("재구성 파싱 실패:", e.message);
   }
 
-  try { return JSON.parse(fixed); } catch(e) {
-    console.error("파싱 실패:", e.message);
-    console.error("fixed:", fixed.substring(0, 300));
-    return null;
+  return null;
+}
+
+// 배열 값 추출 함수 (따옴표 내부의 따옴표 처리)
+function extractArray(jsonStr, key) {
+  // "key": [ ... ] 패턴 찾기
+  const keyPattern = new RegExp(`"${key}"\\s*:\\s*\\[`, 'g');
+  const match = keyPattern.exec(jsonStr);
+  if (!match) return null;
+
+  const arrayStart = match.index + match[0].length;
+  // 배열 끝 찾기 (중첩 대괄호 고려)
+  let depth = 1;
+  let i = arrayStart;
+  while (i < jsonStr.length && depth > 0) {
+    if (jsonStr[i] === '[') depth++;
+    else if (jsonStr[i] === ']') depth--;
+    i++;
   }
+  const arrayContent = jsonStr.slice(arrayStart, i - 1);
+
+  // 문자열 항목들 추출
+  return extractStrings(arrayContent);
+}
+
+// 문자열 배열에서 각 항목 추출
+function extractStrings(content) {
+  const items = [];
+  let i = 0;
+  while (i < content.length) {
+    if (content[i] === '"') {
+      i++;
+      let str = "";
+      while (i < content.length) {
+        if (content[i] === '\\' && i + 1 < content.length) {
+          str += content[i] + content[i + 1];
+          i += 2;
+        } else if (content[i] === '\n') {
+          str += '\\n';
+          i++;
+        } else if (content[i] === '\r') {
+          i++;
+        } else if (content[i] === '"') {
+          // 다음 유효 문자 확인 - , ] } 면 문자열 끝
+          let j = i + 1;
+          while (j < content.length && (content[j] === ' ' || content[j] === '\n' || content[j] === '\r')) j++;
+          if (j >= content.length || content[j] === ',' || content[j] === ']' || content[j] === '}') {
+            i++;
+            break;
+          } else {
+            // 이스케이프 안된 따옴표 → 이스케이프 처리
+            str += '\\"';
+            i++;
+          }
+        } else {
+          str += content[i];
+          i++;
+        }
+      }
+      if (str.length > 0) items.push(str);
+    } else {
+      i++;
+    }
+  }
+  return items.length > 0 ? items : null;
+}
+
+// 네이버 배열 추출 (title/content 객체 배열)
+function extractNaverArray(jsonStr) {
+  const keyPattern = /"naver"\s*:\s*\[/g;
+  const match = keyPattern.exec(jsonStr);
+  if (!match) return null;
+
+  const arrayStart = match.index + match[0].length;
+  let depth = 1;
+  let i = arrayStart;
+  while (i < jsonStr.length && depth > 0) {
+    if (jsonStr[i] === '[') depth++;
+    else if (jsonStr[i] === ']') depth--;
+    i++;
+  }
+  const arrayContent = jsonStr.slice(arrayStart, i - 1);
+
+  // 객체들 분리
+  const items = [];
+  let objStart = -1;
+  let objDepth = 0;
+  for (let j = 0; j < arrayContent.length; j++) {
+    if (arrayContent[j] === '{') {
+      if (objDepth === 0) objStart = j;
+      objDepth++;
+    } else if (arrayContent[j] === '}') {
+      objDepth--;
+      if (objDepth === 0 && objStart !== -1) {
+        const objStr = arrayContent.slice(objStart, j + 1);
+        const titleMatch = extractStringValue(objStr, "title");
+        const contentMatch = extractStringValue(objStr, "content");
+        if (titleMatch && contentMatch) {
+          items.push({ title: titleMatch, content: contentMatch });
+        }
+        objStart = -1;
+      }
+    }
+  }
+  return items.length > 0 ? items : null;
+}
+
+// 객체에서 단일 문자열 값 추출
+function extractStringValue(objStr, key) {
+  const keyPattern = new RegExp(`"${key}"\\s*:\\s*"`);
+  const match = keyPattern.exec(objStr);
+  if (!match) return null;
+
+  const valueStart = match.index + match[0].length;
+  let str = "";
+  let i = valueStart;
+  while (i < objStr.length) {
+    if (objStr[i] === '\\' && i + 1 < objStr.length) {
+      str += objStr[i] + objStr[i + 1];
+      i += 2;
+    } else if (objStr[i] === '\n') {
+      str += '\\n';
+      i++;
+    } else if (objStr[i] === '\r') {
+      i++;
+    } else if (objStr[i] === '"') {
+      let j = i + 1;
+      while (j < objStr.length && (objStr[j] === ' ' || objStr[j] === '\n' || objStr[j] === '\r')) j++;
+      if (j >= objStr.length || objStr[j] === ',' || objStr[j] === '}') {
+        break;
+      } else {
+        str += '\\"';
+        i++;
+      }
+    } else {
+      str += objStr[i];
+      i++;
+    }
+  }
+  return str.length > 0 ? str : null;
 }
 
 app.post("/publish-instagram", async (req, res) => {
@@ -105,6 +246,8 @@ ${isMultiple ? `사진 ${imageCount}장이므로 스토리 있는 콘텐츠로 �
 ★ 당근마켓 (각 400자 이상): 동네 친구형, 신뢰 스토리형, 혜택 강조형.
 ★ 네이버 블로그 (제목+본문 각 1500자 이상): 상세 리뷰형, 추천 가이드형, 스토리 리뷰형.
 
+중요: 문구 안에 큰따옴표(")를 절대 사용하지 마세요. 인용이 필요하면 작은따옴표(')를 사용하세요.
+
 반드시 아래 JSON 형식으로만 응답하세요:
 {"instagram":["문구1","문구2","문구3"],"threads":["문구1","문구2","문구3"],"facebook":["문구1","문구2","문구3"],"daangn":["문구1","문구2","문구3"],"naver":[{"title":"제목1","content":"본문1"},{"title":"제목2","content":"본문2"},{"title":"제목3","content":"본문3"}]}`;
 
@@ -113,30 +256,23 @@ ${isMultiple ? `사진 ${imageCount}장이므로 스토리 있는 콘텐츠로 �
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [...imageParts, { text: prompt }] }],
-        generationConfig: {
-          maxOutputTokens: 16384,
-          temperature: 0.9
-        }
+        generationConfig: { maxOutputTokens: 16384, temperature: 0.9 }
       }),
     });
 
     const data = await response.json();
-    console.log("Gemini 전체 응답:", JSON.stringify(data).substring(0, 800));
+    console.log("Gemini 응답:", JSON.stringify(data).substring(0, 500));
 
     if (!data.candidates?.[0]?.content?.parts) {
       return res.status(500).json({ success: false, error: "Gemini 오류: " + JSON.stringify(data).substring(0, 300) });
     }
 
-    // thought 파트 제외, 실제 텍스트만 추출
-    const parts = data.candidates[0].content.parts;
-    console.log("parts 수:", parts.length, "| 각 타입:", parts.map(p => Object.keys(p).join(",")));
-
-    const text = parts
+    const text = data.candidates[0].content.parts
       .filter(p => p.text && !p.thought)
       .map(p => p.text)
       .join("");
 
-    console.log("추출 텍스트 길이:", text.length, "| 앞부분:", text.substring(0, 200));
+    console.log("추출 텍스트 길이:", text.length, "| 앞부분:", text.substring(0, 100));
 
     if (!text) return res.status(500).json({ success: false, error: "응답 텍스트 없음" });
 
