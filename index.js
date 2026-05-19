@@ -4,7 +4,6 @@ const path = require("path");
 const fs = require("fs");
 const ffmpeg = require("fluent-ffmpeg");
 const ffmpegInstaller = require("@ffmpeg-installer/ffmpeg");
-const { jsonrepair } = require("jsonrepair");
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 require("dotenv").config();
 
@@ -29,25 +28,32 @@ app.use(express.json());
 
 const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL || "https://hook.eu1.make.com/k11ssrej9q80xb81b2o9r7e1rqu1kq";
 
+// JSON 파서: 실제 줄바꿈, 코드블록 처리
 function robustParseJSON(text) {
-  // 1단계: 코드블록 제거
   let cleaned = text.replace(/```json\n?|```\n?/g, "").trim();
-
-  // 2단계: { } 범위 추출
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
   if (start === -1 || end === -1) return null;
   let jsonStr = cleaned.slice(start, end + 1);
 
-  // 3단계: 직접 파싱
+  // 직접 파싱
   try { return JSON.parse(jsonStr); } catch(e) {}
 
-  // 4단계: jsonrepair로 손상된 JSON 복구 (따옴표 미이스케이프, 실제 줄바꿈 등 모두 처리)
-  try {
-    const repaired = jsonrepair(jsonStr);
-    return JSON.parse(repaired);
-  } catch(e) {
-    console.error("jsonrepair 실패:", e.message);
+  // 줄바꿈 치환 후 재시도
+  let fixed = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < jsonStr.length; i++) {
+    const ch = jsonStr[i];
+    if (escaped) { fixed += ch; escaped = false; }
+    else if (ch === "\\") { fixed += ch; escaped = true; }
+    else if (ch === '"') { inString = !inString; fixed += ch; }
+    else if (inString && ch === "\n") { fixed += "\\n"; }
+    else if (inString && ch === "\r") { /* skip */ }
+    else { fixed += ch; }
+  }
+  try { return JSON.parse(fixed); } catch(e) {
+    console.error("파싱 최종 실패:", e.message, "| fixed 앞:", fixed.substring(0, 200));
     return null;
   }
 }
@@ -103,12 +109,17 @@ ${isMultiple ? `사진 ${imageCount}장이므로 스토리 있는 콘텐츠로 �
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [...imageParts, { text: prompt }] }],
-        generationConfig: { maxOutputTokens: 8192, temperature: 0.9 }
+        generationConfig: {
+          maxOutputTokens: 16384,
+          temperature: 0.9,
+          response_mime_type: "application/json",
+          thinkingConfig: { thinkingBudget: 0 }  // thinking OFF → 깔끔한 JSON 반환
+        }
       }),
     });
 
     const data = await response.json();
-    console.log("Gemini 응답:", JSON.stringify(data).substring(0, 500));
+    console.log("Gemini 응답:", JSON.stringify(data).substring(0, 600));
 
     if (!data.candidates?.[0]?.content?.parts) {
       return res.status(500).json({ success: false, error: "Gemini 오류: " + JSON.stringify(data).substring(0, 300) });
