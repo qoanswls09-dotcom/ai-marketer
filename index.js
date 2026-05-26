@@ -361,42 +361,97 @@ ${contextSection}
 });
 
 app.post("/create-reels", async (req, res) => {
+  const tempFiles = [];
   try {
-    const { imagePaths } = req.body;
+    let { imagePaths } = req.body;
     if (!imagePaths || imagePaths.length === 0)
       return res.status(400).json({ success: false, error: "사진이 없습니다." });
+
+    // ✅ 최대 6장으로 제한 (Railway 메모리 안전선)
+    const MAX_PHOTOS = 6;
+    if (imagePaths.length > MAX_PHOTOS) {
+      console.log(`⚠️ 사진 ${imagePaths.length}장 → ${MAX_PHOTOS}장으로 제한`);
+      imagePaths = imagePaths.slice(0, MAX_PHOTOS);
+    }
+
     const filename = `reels_${Date.now()}.mp4`;
     const outputPath = path.join(VIDEO_DIR, filename);
-    const duration = Math.max(3, Math.floor(15 / imagePaths.length));
+    // 총 15초 분배, 장당 최소 2초 최대 5초
+    const duration = Math.min(5, Math.max(2, Math.floor(15 / imagePaths.length)));
+
+    console.log(`🎬 릴스 생성 시작: ${imagePaths.length}장 × ${duration}초`);
+
+    // 1단계: 사진 1장씩 순차적으로 480x854 클립 변환 (메모리 최소화)
+    const clipPaths = [];
+    for (let i = 0; i < imagePaths.length; i++) {
+      const clipPath = path.join(VIDEO_DIR, `clip_${Date.now()}_${i}.mp4`);
+      tempFiles.push(clipPath);
+      clipPaths.push(clipPath);
+
+      await new Promise((resolve, reject) => {
+        ffmpeg(imagePaths[i])
+          .inputOptions(["-loop 1", `-t ${duration}`])
+          .videoFilters([
+            // ✅ 480x854 (9:16) - 720p 대비 메모리 절반
+            "scale=480:854:force_original_aspect_ratio=decrease",
+            "pad=480:854:(ow-iw)/2:(oh-ih)/2:black",
+            "setsar=1",
+          ])
+          .outputOptions([
+            "-c:v libx264",
+            "-preset ultrafast",  // 인코딩 속도 최우선
+            "-crf 30",            // 압축률 높임 (용량↓ 메모리↓)
+            "-pix_fmt yuv420p",
+            "-r 20",              // 20fps (메모리↓)
+            "-threads 1",         // 단일 스레드
+            "-an",
+          ])
+          .output(clipPath)
+          .on("end", resolve)
+          .on("error", reject)
+          .run();
+      });
+      console.log(`  ✅ 클립 ${i + 1}/${imagePaths.length} 완료`);
+    }
+
+    // 2단계: concat demuxer로 이어붙이기 (재인코딩 없음 → 메모리 거의 0)
+    const concatListPath = path.join(VIDEO_DIR, `concat_${Date.now()}.txt`);
+    tempFiles.push(concatListPath);
+    fs.writeFileSync(concatListPath, clipPaths.map((p) => `file '${p}'`).join("\n"));
+
     await new Promise((resolve, reject) => {
-      const command = ffmpeg();
-      imagePaths.forEach((imgPath) => command.input(imgPath).inputOptions([`-loop 1`, `-t ${duration}`]));
-      command
-        .complexFilter([
-          imagePaths
-            .map(
-              (_, i) =>
-                `[${i}:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1[v${i}]`
-            )
-            .join(";") +
-            ";" +
-            imagePaths.map((_, i) => `[v${i}]`).join("") +
-            `concat=n=${imagePaths.length}:v=1:a=0[outv]`,
-        ])
-        .outputOptions(["-map [outv]", "-c:v libx264", "-pix_fmt yuv420p", "-r 30"])
+      ffmpeg()
+        .input(concatListPath)
+        .inputOptions(["-f concat", "-safe 0"])
+        .outputOptions(["-c copy", "-threads 1"])
         .output(outputPath)
         .on("end", resolve)
         .on("error", reject)
         .run();
     });
-    imagePaths.forEach((p) => {
-      try { fs.unlinkSync(p); } catch (e) {}
-    });
+
+    console.log("✅ 릴스 영상 완성!");
+
+    // 임시 파일 정리
+    tempFiles.forEach((p) => { try { fs.unlinkSync(p); } catch (e) {} });
+    imagePaths.forEach((p) => { try { fs.unlinkSync(p); } catch (e) {} });
+
     const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
-    const videoUrl =
-      process.env.NODE_ENV === "production" ? `${BASE_URL}/video/${filename}` : `/videos/${filename}`;
-    res.json({ success: true, videoUrl });
+    const videoUrl = process.env.NODE_ENV === "production"
+      ? `${BASE_URL}/video/${filename}`
+      : `/videos/${filename}`;
+
+    res.json({
+      success: true,
+      videoUrl,
+      // 장수 제한 시 프론트에 알림
+      message: imagePaths.length < req.body.imagePaths?.length
+        ? `앞 ${MAX_PHOTOS}장으로 영상을 만들었어요 (서버 제한)`
+        : null,
+    });
   } catch (error) {
+    tempFiles.forEach((p) => { try { fs.unlinkSync(p); } catch (e) {} });
+    console.error("❌ 릴스 생성 오류:", error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });

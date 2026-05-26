@@ -88,6 +88,13 @@ header span{font-size:13px;color:#888}
 .option-text.expanded{max-height:none}
 .expand-btn{font-size:11px;color:#2563eb;background:none;border:none;cursor:pointer;margin-top:4px;display:block}
 .naver-title-text{font-size:13px;font-weight:700;color:#059669;margin-bottom:6px}
+/* 네이버 블로그 카드 */
+.naver-blog-preview{background:#f0fdf4;border-radius:10px;overflow:hidden;margin-bottom:8px}
+.naver-blog-title{font-size:15px;font-weight:800;color:#15803d;padding:14px 16px 10px;border-bottom:1px solid #bbf7d0;line-height:1.4}
+.naver-blog-photos{display:flex;gap:6px;padding:10px 16px;overflow-x:auto;background:#fff}
+.naver-blog-photos img{width:80px;height:80px;object-fit:cover;border-radius:6px;flex-shrink:0;border:1px solid #e5e7eb}
+.naver-blog-content{font-size:13px;color:#374151;line-height:2;padding:12px 16px;white-space:pre-wrap;max-height:220px;overflow-y:auto}
+.naver-blog-content.expanded{max-height:none}
 .edit-area{width:100%;border:1px solid #e5e7eb;border-radius:8px;padding:10px;font-size:13px;line-height:1.7;margin-top:8px;display:none;resize:vertical;font-family:'맑은 고딕',sans-serif;color:#374151;min-height:120px}
 .edit-btn{font-size:11px;color:#6b7280;background:none;border:none;cursor:pointer;margin-top:6px;text-decoration:underline}
 .card-actions{position:absolute;bottom:10px;left:16px;right:16px;display:flex;gap:6px}
@@ -95,13 +102,26 @@ header span{font-size:13px;color:#888}
 .copy-btn:hover{background:#e5e7eb}
 .copy-btn.copied{background:#dcfce7;color:#16a34a}
 .publish-section{background:#fff;border-radius:14px;padding:20px;margin-bottom:16px;box-shadow:0 2px 8px rgba(0,0,0,0.06);display:none}
-.publish-section h3{font-size:15px;font-weight:700;margin-bottom:14px;color:#374151}
+.publish-section h3{font-size:15px;font-weight:700;margin-bottom:4px;color:#374151}
+.publish-section .sub{font-size:12px;color:#9ca3af;margin-bottom:14px}
 .selected-summary{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
-.summary-item{display:flex;align-items:flex-start;gap:8px;font-size:13px;padding:8px 12px;background:#f9fafb;border-radius:8px}
-.summary-icon{font-size:16px;flex-shrink:0}
-.summary-text{color:#374151;line-height:1.5}
-.publish-btn{width:100%;background:#16a34a;color:#fff;border:none;border-radius:12px;padding:16px;font-size:16px;font-weight:700;cursor:pointer}
-.publish-btn:hover{background:#15803d}
+.summary-item{display:flex;align-items:flex-start;gap:8px;font-size:13px;padding:10px 12px;background:#f9fafb;border-radius:10px;border:1.5px solid #e5e7eb}
+.summary-item.instagram-item{border-color:#fbcfe8;background:#fdf2f8}
+.summary-icon{font-size:16px;flex-shrink:0;margin-top:1px}
+.summary-text{color:#374151;line-height:1.5;flex:1;min-width:0}
+.summary-text strong{display:block;font-size:11px;color:#6b7280;margin-bottom:2px}
+.summary-text p{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.summary-actions{display:flex;gap:6px;flex-shrink:0}
+.sum-copy-btn{background:#e5e7eb;border:none;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;color:#555;white-space:nowrap}
+.sum-copy-btn:hover{background:#d1d5db}
+.sum-copy-btn.copied{background:#dcfce7;color:#16a34a}
+.sum-publish-btn{background:#be185d;border:none;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;color:#fff;white-space:nowrap}
+.sum-publish-btn:hover{background:#9d174d}
+.sum-publish-btn.done{background:#16a34a}
+.publish-all-btn{width:100%;background:#16a34a;color:#fff;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:8px}
+.publish-all-btn:hover{background:#15803d}
+.publish-all-btn:disabled{background:#86efac;cursor:not-allowed}
+.publish-count{font-size:13px;color:#374151;text-align:center;margin-bottom:12px;font-weight:600}
 #reset-btn{width:100%;background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:14px;font-size:14px;cursor:pointer;margin-top:8px;color:#555}
 </style>
 </head>
@@ -198,8 +218,10 @@ header span{font-size:13px;color:#888}
 <div id="platforms"></div>
 <div class="publish-section" id="publish-section">
 <h3>✅ 선택된 콘텐츠 확인</h3>
+<p class="sub">원하는 플랫폼만 선택해서 발행하세요. 선택 안 한 곳은 건너뜁니다.</p>
+<div class="publish-count" id="publish-count"></div>
 <div class="selected-summary" id="selected-summary"></div>
-<button class="publish-btn" onclick="publish()">🚀 승인하고 발행하기</button>
+<button class="publish-all-btn" id="publish-all-btn" onclick="publishAll()">🚀 선택한 콘텐츠 모두 복사하기</button>
 </div>
 <button id="reset-btn" onclick="resetAll()">🔄 새 사진으로 다시 만들기</button>
 </div>
@@ -313,6 +335,11 @@ btn.disabled=false;
 document.getElementById('loading').style.display='none';
 }
 
+function fixNewlines(str){
+  // 서버에서 \\n으로 온 것을 실제 줄바꿈으로 변환
+  return (str||'').replace(/\\n/g,'\n');
+}
+
 function renderPlatforms(){
 const container=document.getElementById('platforms');
 container.innerHTML='';
@@ -321,16 +348,35 @@ platforms.forEach(p=>{
 const items=contentData[p.key];
 let optionsHtml='';
 items.forEach((item,i)=>{
-const textContent=p.key==='naver'?
-`<div class="naver-title-text">📌 ${item.title}</div><div class="option-text" id="text-${p.key}-${i}">${item.content}</div>`:
-`<div class="option-text" id="text-${p.key}-${i}">${item}</div>`;
+let textContent='';
+if(p.key==='naver'){
+  // ✅ 블로그: 제목 + 사진 + 본문 자동 배열
+  const title=fixNewlines(item.title||'');
+  const content=fixNewlines(item.content||'');
+  // 업로드된 사진 미리보기
+  let photosHtml='';
+  if(selectedFiles && selectedFiles.length>0){
+    const photoImgs=selectedFiles.map(f=>`<img src="${URL.createObjectURL(f)}" alt="사진">`).join('');
+    photosHtml=`<div class="naver-blog-photos">${photoImgs}</div>`;
+  }
+  textContent=`
+    <div class="naver-blog-preview">
+      <div class="naver-blog-title">📌 ${title}</div>
+      ${photosHtml}
+      <div class="naver-blog-content" id="text-${p.key}-${i}">${content}</div>
+    </div>`;
+} else {
+  // ✅ 일반 플랫폼: \n → 실제 줄바꿈으로 표시
+  const displayText=fixNewlines(typeof item==='string'?item:'');
+  textContent=`<div class="option-text" id="text-${p.key}-${i}">${displayText}</div>`;
+}
 optionsHtml+=`
 <div class="option-card" id="${p.key}-${i}" onclick="selectOption('${p.key}',${i})">
 <div class="option-num">제안 ${i+1} ${i===0?'⭐ 추천':''}</div>
 ${textContent}
 <button class="expand-btn" onclick="event.stopPropagation();toggleExpand('text-${p.key}-${i}',this)">▼ 더 보기</button>
 <button class="edit-btn" onclick="event.stopPropagation();toggleEdit('${p.key}-edit-${i}')">✏️ 직접 수정</button>
-<textarea class="edit-area" id="${p.key}-edit-${i}" onchange="updateEdit('${p.key}',${i},this.value)">${p.key==='naver'?item.title+'\n\n'+item.content:item}</textarea>
+<textarea class="edit-area" id="${p.key}-edit-${i}" onchange="updateEdit('${p.key}',${i},this.value)">${p.key==='naver'?fixNewlines(item.title)+'\n\n'+fixNewlines(item.content):fixNewlines(item)}</textarea>
 <div class="card-actions">
 <button class="copy-btn" onclick="event.stopPropagation();copyText('text-${p.key}-${i}',this)">📋 복사</button>
 ${p.key==='instagram'?`<button class="copy-btn" onclick="event.stopPropagation();copyInstagram('${p.key}',${i},this)" style="background:#fce7f3;color:#be185d">📸 인스타 발행</button>`:''}
@@ -350,8 +396,14 @@ container.innerHTML+=`
 
 function toggleExpand(id,btn){
 const el=document.getElementById(id);
-if(el.classList.contains('expanded')){el.classList.remove('expanded');btn.textContent='▼ 더 보기';}
-else{el.classList.add('expanded');btn.textContent='▲ 접기';}
+if(!el)return;
+if(el.classList.contains('expanded')||el.classList.contains('naver-blog-content')){
+  el.classList.toggle('expanded');
+  btn.textContent=el.classList.contains('expanded')?'▲ 접기':'▼ 더 보기';
+}else{
+  el.classList.toggle('expanded');
+  btn.textContent=el.classList.contains('expanded')?'▲ 접기':'▼ 더 보기';
+}
 }
 function selectOption(platform,index){
 selected[platform]=index;
@@ -367,7 +419,9 @@ el.style.display=el.style.display==='none'||el.style.display===''?'block':'none'
 }
 function copyText(id,btn){
 const el=document.getElementById(id);
-navigator.clipboard.writeText(el.textContent).then(()=>{
+// innerText가 실제 줄바꿈을 유지함
+const text=(el.innerText||el.textContent||'').trim();
+navigator.clipboard.writeText(text).then(()=>{
 btn.textContent='✅ 복사됨';btn.classList.add('copied');
 setTimeout(()=>{btn.textContent='📋 복사';btn.classList.remove('copied');},2000);
 });
@@ -429,22 +483,90 @@ btn.textContent='✅ 영상 완성!';
 function updatePublishSection(){
 const section=document.getElementById('publish-section');
 const summary=document.getElementById('selected-summary');
+const countEl=document.getElementById('publish-count');
 summary.innerHTML='';
+let count=0;
 platforms.forEach(p=>{
-if(selected[p.key]!==null){
+if(selected[p.key]===null)return;
+count++;
 const item=contentData[p.key][selected[p.key]];
-const text=p.key==='naver'?item.title:item;
-summary.innerHTML+=`<div class="summary-item"><span class="summary-icon">${p.icon}</span><div class="summary-text">${text.substring(0,80)}...</div></div>`;
-}
+const isNaver=p.key==='naver';
+const text=isNaver?fixNewlines(item.title):fixNewlines(typeof item==='string'?item:item.content||'');
+const preview=text.replace(/\n/g,' ').substring(0,60)+(text.length>60?'...':'');
+const isInsta=p.key==='instagram';
+summary.innerHTML+=`
+<div class="summary-item${isInsta?' instagram-item':''}">
+  <span class="summary-icon">${p.icon}</span>
+  <div class="summary-text">
+    <strong>${p.name} ${isInsta?'(인스타 자동발행 가능)':''}</strong>
+    <p>${preview}</p>
+  </div>
+  <div class="summary-actions">
+    <button class="sum-copy-btn" onclick="copySelectedItem('${p.key}',this)">📋 복사</button>
+    ${isInsta?`<button class="sum-publish-btn" id="publish-insta-btn" onclick="publishInstagram(this)">📸 발행</button>`:''}
+  </div>
+</div>`;
 });
-section.style.display=Object.values(selected).some(v=>v!==null)?'block':'none';
+countEl.textContent=count>0?`✨ ${count}개 플랫폼 선택됨`:'';
+const allBtn=document.getElementById('publish-all-btn');
+allBtn.textContent=`🚀 선택한 ${count}개 콘텐츠 모두 복사하기`;
+section.style.display=count>0?'block':'none';
 }
 
-function publish(){
-const missing=platforms.filter(p=>selected[p.key]===null).map(p=>p.name);
-if(missing.length>0){alert('아직 선택 안 한 플랫폼:\n'+missing.join(', ')+'\n\n모두 선택 후 발행해주세요!');return;}
-alert('✅ 승인 완료!\n\nMeta API 연동 완료 후 자동 발행됩니다.\n지금은 복사 버튼으로 각 플랫폼에 붙여넣기 해주세요!');
+function copySelectedItem(platform, btn){
+const idx=selected[platform];
+if(idx===null)return;
+const item=contentData[platform][idx];
+const text=platform==='naver'
+  ?fixNewlines(item.title)+'\n\n'+fixNewlines(item.content)
+  :fixNewlines(typeof item==='string'?item:item.content||'');
+navigator.clipboard.writeText(text).then(()=>{
+  btn.textContent='✅ 복사됨';btn.classList.add('copied');
+  setTimeout(()=>{btn.textContent='📋 복사';btn.classList.remove('copied');},2000);
+});
 }
+
+async function publishInstagram(btn){
+const idx=selected['instagram'];
+if(idx===null)return;
+const item=contentData['instagram'][idx];
+const caption=fixNewlines(typeof item==='string'?item:item.content||'');
+btn.textContent='발행 중...';btn.disabled=true;
+// 이미지 URL 구성 (서버에 올라간 첫 번째 사진 사용)
+const imageUrl=imagePaths.length>0?`${window.location.origin}/uploaded/${encodeURIComponent(imagePaths[0].split('/').pop())}`:'';
+try{
+const res=await fetch('/publish-instagram',{
+  method:'POST',
+  headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({type:'photo',url:imageUrl,caption})
+});
+const data=await res.json();
+if(data.success){btn.textContent='✅ 발행완료';btn.classList.add('done');}
+else{alert('발행 오류: '+data.error);btn.textContent='📸 발행';btn.disabled=false;}
+}catch(e){alert('연결 오류');btn.textContent='📸 발행';btn.disabled=false;}
+}
+
+async function publishAll(){
+const btn=document.getElementById('publish-all-btn');
+const selected_platforms=platforms.filter(p=>selected[p.key]!==null);
+if(selected_platforms.length===0)return;
+btn.disabled=true;btn.textContent='복사 중...';
+// 모든 선택된 플랫폼 텍스트를 합쳐서 클립보드에
+let allText='';
+selected_platforms.forEach(p=>{
+const idx=selected[p.key];
+const item=contentData[p.key][idx];
+const text=p.key==='naver'
+  ?fixNewlines(item.title)+'\n\n'+fixNewlines(item.content)
+  :fixNewlines(typeof item==='string'?item:item.content||'');
+allText+=`\n\n===[ ${p.name} ]===\n\n${text}`;
+});
+await navigator.clipboard.writeText(allText.trim());
+btn.textContent='✅ 모두 복사됐어요!';
+setTimeout(()=>{btn.textContent=`🚀 선택한 ${selected_platforms.length}개 콘텐츠 모두 복사하기`;btn.disabled=false;},3000);
+}
+
+function publish(){}
 function resetUpload(){
 document.getElementById('file-input').value='';
 document.getElementById('upload-box').style.display='block';
