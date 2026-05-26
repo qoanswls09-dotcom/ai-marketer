@@ -28,65 +28,43 @@ app.use(express.json());
 
 const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL || "https://hook.eu1.make.com/k11ssrej9q80xb81b2o9r7e1rqu1kq";
 
-// JSON 파서: 실제 줄바꿈 + 이스케이프 안된 따옴표 처리
 function robustParseJSON(text) {
-  // 코드블록 제거
   let cleaned = text.replace(/```json\n?|```\n?/g, "").trim();
-
-  // { } 범위 추출
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
   if (start === -1 || end === -1) return null;
   let jsonStr = cleaned.slice(start, end + 1);
 
-  // 직접 파싱
   try { return JSON.parse(jsonStr); } catch(e) {}
 
-  // JSON 구조를 완전히 재구성하는 방식으로 파싱
-  // 핵심 키들을 정규식으로 직접 추출
+  // 키별 직접 추출
   try {
     const result = {};
-
-    // instagram 배열 추출
     result.instagram = extractArray(jsonStr, "instagram");
     result.threads = extractArray(jsonStr, "threads");
     result.facebook = extractArray(jsonStr, "facebook");
     result.daangn = extractArray(jsonStr, "daangn");
     result.naver = extractNaverArray(jsonStr);
-
-    if (result.instagram && result.threads && result.facebook && result.daangn && result.naver) {
-      return result;
-    }
-  } catch(e) {
-    console.error("재구성 파싱 실패:", e.message);
-  }
+    if (result.instagram && result.threads && result.facebook && result.daangn && result.naver) return result;
+  } catch(e) { console.error("재구성 파싱 실패:", e.message); }
 
   return null;
 }
 
-// 배열 값 추출 함수 (따옴표 내부의 따옴표 처리)
 function extractArray(jsonStr, key) {
-  // "key": [ ... ] 패턴 찾기
   const keyPattern = new RegExp(`"${key}"\\s*:\\s*\\[`, 'g');
   const match = keyPattern.exec(jsonStr);
   if (!match) return null;
-
   const arrayStart = match.index + match[0].length;
-  // 배열 끝 찾기 (중첩 대괄호 고려)
-  let depth = 1;
-  let i = arrayStart;
+  let depth = 1, i = arrayStart;
   while (i < jsonStr.length && depth > 0) {
     if (jsonStr[i] === '[') depth++;
     else if (jsonStr[i] === ']') depth--;
     i++;
   }
-  const arrayContent = jsonStr.slice(arrayStart, i - 1);
-
-  // 문자열 항목들 추출
-  return extractStrings(arrayContent);
+  return extractStrings(jsonStr.slice(arrayStart, i - 1));
 }
 
-// 문자열 배열에서 각 항목 추출
 function extractStrings(content) {
   const items = [];
   let i = 0;
@@ -95,72 +73,45 @@ function extractStrings(content) {
       i++;
       let str = "";
       while (i < content.length) {
-        if (content[i] === '\\' && i + 1 < content.length) {
-          str += content[i] + content[i + 1];
-          i += 2;
-        } else if (content[i] === '\n') {
-          str += '\\n';
-          i++;
-        } else if (content[i] === '\r') {
-          i++;
-        } else if (content[i] === '"') {
-          // 다음 유효 문자 확인 - , ] } 면 문자열 끝
+        if (content[i] === '\\' && i + 1 < content.length) { str += content[i] + content[i+1]; i += 2; }
+        else if (content[i] === '\n') { str += '\\n'; i++; }
+        else if (content[i] === '\r') { i++; }
+        else if (content[i] === '"') {
           let j = i + 1;
           while (j < content.length && (content[j] === ' ' || content[j] === '\n' || content[j] === '\r')) j++;
-          if (j >= content.length || content[j] === ',' || content[j] === ']' || content[j] === '}') {
-            i++;
-            break;
-          } else {
-            // 이스케이프 안된 따옴표 → 이스케이프 처리
-            str += '\\"';
-            i++;
-          }
-        } else {
-          str += content[i];
-          i++;
-        }
+          if (j >= content.length || content[j] === ',' || content[j] === ']' || content[j] === '}') { i++; break; }
+          else { str += '\\"'; i++; }
+        } else { str += content[i]; i++; }
       }
       if (str.length > 0) items.push(str);
-    } else {
-      i++;
-    }
+    } else { i++; }
   }
   return items.length > 0 ? items : null;
 }
 
-// 네이버 배열 추출 (title/content 객체 배열)
 function extractNaverArray(jsonStr) {
   const keyPattern = /"naver"\s*:\s*\[/g;
   const match = keyPattern.exec(jsonStr);
   if (!match) return null;
-
   const arrayStart = match.index + match[0].length;
-  let depth = 1;
-  let i = arrayStart;
+  let depth = 1, i = arrayStart;
   while (i < jsonStr.length && depth > 0) {
     if (jsonStr[i] === '[') depth++;
     else if (jsonStr[i] === ']') depth--;
     i++;
   }
   const arrayContent = jsonStr.slice(arrayStart, i - 1);
-
-  // 객체들 분리
   const items = [];
-  let objStart = -1;
-  let objDepth = 0;
+  let objStart = -1, objDepth = 0;
   for (let j = 0; j < arrayContent.length; j++) {
-    if (arrayContent[j] === '{') {
-      if (objDepth === 0) objStart = j;
-      objDepth++;
-    } else if (arrayContent[j] === '}') {
+    if (arrayContent[j] === '{') { if (objDepth === 0) objStart = j; objDepth++; }
+    else if (arrayContent[j] === '}') {
       objDepth--;
       if (objDepth === 0 && objStart !== -1) {
         const objStr = arrayContent.slice(objStart, j + 1);
-        const titleMatch = extractStringValue(objStr, "title");
-        const contentMatch = extractStringValue(objStr, "content");
-        if (titleMatch && contentMatch) {
-          items.push({ title: titleMatch, content: contentMatch });
-        }
+        const title = extractStringValue(objStr, "title");
+        const content = extractStringValue(objStr, "content");
+        if (title && content) items.push({ title, content });
         objStart = -1;
       }
     }
@@ -168,37 +119,21 @@ function extractNaverArray(jsonStr) {
   return items.length > 0 ? items : null;
 }
 
-// 객체에서 단일 문자열 값 추출
 function extractStringValue(objStr, key) {
   const keyPattern = new RegExp(`"${key}"\\s*:\\s*"`);
   const match = keyPattern.exec(objStr);
   if (!match) return null;
-
-  const valueStart = match.index + match[0].length;
-  let str = "";
-  let i = valueStart;
+  let str = "", i = match.index + match[0].length;
   while (i < objStr.length) {
-    if (objStr[i] === '\\' && i + 1 < objStr.length) {
-      str += objStr[i] + objStr[i + 1];
-      i += 2;
-    } else if (objStr[i] === '\n') {
-      str += '\\n';
-      i++;
-    } else if (objStr[i] === '\r') {
-      i++;
-    } else if (objStr[i] === '"') {
+    if (objStr[i] === '\\' && i + 1 < objStr.length) { str += objStr[i] + objStr[i+1]; i += 2; }
+    else if (objStr[i] === '\n') { str += '\\n'; i++; }
+    else if (objStr[i] === '\r') { i++; }
+    else if (objStr[i] === '"') {
       let j = i + 1;
       while (j < objStr.length && (objStr[j] === ' ' || objStr[j] === '\n' || objStr[j] === '\r')) j++;
-      if (j >= objStr.length || objStr[j] === ',' || objStr[j] === '}') {
-        break;
-      } else {
-        str += '\\"';
-        i++;
-      }
-    } else {
-      str += objStr[i];
-      i++;
-    }
+      if (j >= objStr.length || objStr[j] === ',' || objStr[j] === '}') break;
+      else { str += '\\"'; i++; }
+    } else { str += objStr[i]; i++; }
   }
   return str.length > 0 ? str : null;
 }
@@ -213,11 +148,8 @@ app.post("/publish-instagram", async (req, res) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    if (response.ok) {
-      res.json({ success: true, message: "Instagram 발행 요청이 완료됐어요!" });
-    } else {
-      res.status(500).json({ success: false, error: "Make.com 오류: " + await response.text() });
-    }
+    if (response.ok) res.json({ success: true, message: "Instagram 발행 요청이 완료됐어요!" });
+    else res.status(500).json({ success: false, error: "Make.com 오류: " + await response.text() });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -235,10 +167,40 @@ app.post("/generate", upload.array("images", 10), async (req, res) => {
     const imageCount = files.length;
     const isMultiple = imageCount > 1;
 
+    // 프로필/맥락/톤 수신
+    const storeName = req.body.storeName || "";
+    const storeType = req.body.storeType || "";
+    const storeLocation = req.body.storeLocation || "";
+    const storePrice = req.body.storePrice || "";
+    const storeFeature = req.body.storeFeature || "";
+    const context = req.body.context || "";
+    const tone = req.body.tone || "활기차고 에너제틱하게";
+
+    // 매장 프로필 섹션 구성
+    const profileSection = (storeName || storeType || storeLocation || storeFeature) ? `
+[매장 정보]
+${storeName ? `- 매장명: ${storeName}` : ""}
+${storeType ? `- 업종/메뉴: ${storeType}` : ""}
+${storeLocation ? `- 위치: ${storeLocation}` : ""}
+${storePrice ? `- 가격대: ${storePrice}` : ""}
+${storeFeature ? `- 우리 매장 특징/강점: ${storeFeature}` : ""}
+` : "";
+
+    const contextSection = context ? `
+[오늘의 포인트 - 반드시 반영하세요]
+${context}
+` : "";
+
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
 
-    const prompt = `당신은 SNS 바이럴 마케팅 전문가입니다. 총 ${imageCount}장의 사진을 분석하여 콘텐츠를 작성하세요.
+    const prompt = `당신은 SNS 바이럴 마케팅 전문가입니다. 총 ${imageCount}장의 사진을 분석하여 자영업자의 매장 홍보 콘텐츠를 작성하세요.
 ${isMultiple ? `사진 ${imageCount}장이므로 스토리 있는 콘텐츠로 구성하세요.` : ""}
+
+[톤/분위기]
+${tone}으로 작성해주세요.
+
+${profileSection}
+${contextSection}
 
 ★ 인스타그램 (각 500자 이상): 감성 스토리텔링형, 정보 큐레이션형(저장 유도), 바이럴 참여형. 각각 해시태그 15개.
 ★ 쓰레드 (각 300자 이상): 공감형, 정보형, 유머형.
@@ -277,14 +239,8 @@ ${isMultiple ? `사진 ${imageCount}장이므로 스토리 있는 콘텐츠로 �
     if (!text) return res.status(500).json({ success: false, error: "응답 텍스트 없음" });
 
     const result = robustParseJSON(text);
-
-    if (!result) {
-      return res.status(500).json({ success: false, error: "JSON 파싱 실패. 원본: " + text.substring(0, 300) });
-    }
-
-    if (!result.instagram || !result.naver) {
-      return res.status(500).json({ success: false, error: "응답 구조 오류: " + JSON.stringify(Object.keys(result)) });
-    }
+    if (!result) return res.status(500).json({ success: false, error: "JSON 파싱 실패. 원본: " + text.substring(0, 300) });
+    if (!result.instagram || !result.naver) return res.status(500).json({ success: false, error: "응답 구조 오류" });
 
     const filePaths = files.map(f => f.path);
     result.imagePaths = filePaths;
@@ -301,11 +257,9 @@ app.post("/create-reels", async (req, res) => {
   try {
     const { imagePaths } = req.body;
     if (!imagePaths || imagePaths.length === 0) return res.status(400).json({ success: false, error: "사진이 없습니다." });
-
     const filename = `reels_${Date.now()}.mp4`;
     const outputPath = path.join(VIDEO_DIR, filename);
     const duration = Math.max(3, Math.floor(15 / imagePaths.length));
-
     await new Promise((resolve, reject) => {
       const command = ffmpeg();
       imagePaths.forEach(imgPath => command.input(imgPath).inputOptions([`-loop 1`, `-t ${duration}`]));
@@ -317,14 +271,9 @@ app.post("/create-reels", async (req, res) => {
           imagePaths.map((_, i) => `[v${i}]`).join("") + `concat=n=${imagePaths.length}:v=1:a=0[outv]`
         ])
         .outputOptions(["-map [outv]", "-c:v libx264", "-pix_fmt yuv420p", "-r 30"])
-        .output(outputPath)
-        .on("end", resolve)
-        .on("error", reject)
-        .run();
+        .output(outputPath).on("end", resolve).on("error", reject).run();
     });
-
     imagePaths.forEach(p => { try { fs.unlinkSync(p); } catch(e) {} });
-
     const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
     const videoUrl = process.env.NODE_ENV === "production" ? `${BASE_URL}/video/${filename}` : `/videos/${filename}`;
     res.json({ success: true, videoUrl });
