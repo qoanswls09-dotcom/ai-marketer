@@ -456,6 +456,12 @@ app.post("/create-reels", async (req, res) => {
   }
 });
 
+app.get("/image/:filename", (req, res) => {
+  const filePath = path.join(UPLOAD_DIR, req.params.filename);
+  if (fs.existsSync(filePath)) res.sendFile(filePath);
+  else res.status(404).json({ error: "파일 없음" });
+});
+
 app.get("/video/:filename", (req, res) => {
   const filePath = path.join(VIDEO_DIR, req.params.filename);
   if (fs.existsSync(filePath)) res.sendFile(filePath);

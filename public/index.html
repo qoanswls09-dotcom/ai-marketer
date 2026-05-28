@@ -230,7 +230,7 @@ header span{font-size:13px;color:#888}
 let selectedFiles=[];
 let contentData=null;
 let imagePaths=[];
-let selected={instagram:null,threads:null,facebook:null,daangn:null,naver:null};
+let selected=new Set(); // "platform-index" 형태로 저장, 토글 가능
 let selectedTone='활기차고 에너제틱하게';
 const platforms=[
 {key:'instagram',icon:'📸',name:'인스타그램'},
@@ -343,7 +343,7 @@ function fixNewlines(str){
 function renderPlatforms(){
 const container=document.getElementById('platforms');
 container.innerHTML='';
-selected={instagram:null,threads:null,facebook:null,daangn:null,naver:null};
+selected=new Set();
 platforms.forEach(p=>{
 const items=contentData[p.key];
 let optionsHtml='';
@@ -406,11 +406,17 @@ if(el.classList.contains('expanded')||el.classList.contains('naver-blog-content'
 }
 }
 function selectOption(platform,index){
-selected[platform]=index;
-document.querySelectorAll(`[id^="${platform}-"]`).forEach(el=>{
-if(el.classList.contains('option-card'))el.classList.remove('selected');
-});
-document.getElementById(`${platform}-${index}`).classList.add('selected');
+const key=`${platform}-${index}`;
+const card=document.getElementById(`${platform}-${index}`);
+if(selected.has(key)){
+  // 이미 선택됨 → 선택 취소
+  selected.delete(key);
+  card.classList.remove('selected');
+}else{
+  // 선택 안됨 → 선택
+  selected.add(key);
+  card.classList.add('selected');
+}
 updatePublishSection();
 }
 function toggleEdit(id){
@@ -459,7 +465,12 @@ formData.append('tone',selectedTone);
 try{
 const res=await fetch('/generate',{method:'POST',body:formData});
 const data=await res.json();
-if(data.success){contentData[platform]=data.content[platform];selected[platform]=null;renderPlatforms();}
+if(data.success){
+  contentData[platform]=data.content[platform];
+  // 해당 플랫폼 선택 초기화
+  [...selected].filter(k=>k.startsWith(platform+'-')).forEach(k=>selected.delete(k));
+  renderPlatforms();
+}
 }catch(e){alert('오류 발생');}
 btn.textContent='🔄 다시 제안';btn.disabled=false;
 }
@@ -485,38 +496,41 @@ const section=document.getElementById('publish-section');
 const summary=document.getElementById('selected-summary');
 const countEl=document.getElementById('publish-count');
 summary.innerHTML='';
-let count=0;
-platforms.forEach(p=>{
-if(selected[p.key]===null)return;
-count++;
-const item=contentData[p.key][selected[p.key]];
-const isNaver=p.key==='naver';
-const text=isNaver?fixNewlines(item.title):fixNewlines(typeof item==='string'?item:item.content||'');
-const preview=text.replace(/\n/g,' ').substring(0,60)+(text.length>60?'...':'');
-const isInsta=p.key==='instagram';
-summary.innerHTML+=`
-<div class="summary-item${isInsta?' instagram-item':''}">
-  <span class="summary-icon">${p.icon}</span>
-  <div class="summary-text">
-    <strong>${p.name} ${isInsta?'(인스타 자동발행 가능)':''}</strong>
-    <p>${preview}</p>
-  </div>
-  <div class="summary-actions">
-    <button class="sum-copy-btn" onclick="copySelectedItem('${p.key}',this)">📋 복사</button>
-    ${isInsta?`<button class="sum-publish-btn" id="publish-insta-btn" onclick="publishInstagram(this)">📸 발행</button>`:''}
-  </div>
-</div>`;
+const count=selected.size;
+
+// selected Set을 순회해서 각 항목 표시
+[...selected].forEach(key=>{
+  const [platform,...rest]=key.split('-');
+  const index=parseInt(rest[0]);
+  const p=platforms.find(x=>x.key===platform);
+  if(!p)return;
+  const item=contentData[platform][index];
+  const isNaver=platform==='naver';
+  const isInsta=platform==='instagram';
+  const text=isNaver?fixNewlines(item.title||''):fixNewlines(typeof item==='string'?item:item.content||'');
+  const preview=text.replace(/\n/g,' ').substring(0,55)+(text.length>55?'...':'');
+  summary.innerHTML+=`
+  <div class="summary-item${isInsta?' instagram-item':''}">
+    <span class="summary-icon">${p.icon}</span>
+    <div class="summary-text">
+      <strong>${p.name} · 제안${index+1}</strong>
+      <p>${preview}</p>
+    </div>
+    <div class="summary-actions">
+      <button class="sum-copy-btn" onclick="copySelectedItem('${platform}',${index},this)">📋 복사</button>
+      ${isInsta?`<button class="sum-publish-btn" onclick="publishInstagram(${index},this)">📸 발행</button>`:''}
+    </div>
+  </div>`;
 });
-countEl.textContent=count>0?`✨ ${count}개 플랫폼 선택됨`:'';
+
+countEl.textContent=count>0?`✨ ${count}개 선택됨`:'';
 const allBtn=document.getElementById('publish-all-btn');
-allBtn.textContent=`🚀 선택한 ${count}개 콘텐츠 모두 복사하기`;
+allBtn.textContent=`🚀 선택한 ${count}개 모두 복사하기`;
 section.style.display=count>0?'block':'none';
 }
 
-function copySelectedItem(platform, btn){
-const idx=selected[platform];
-if(idx===null)return;
-const item=contentData[platform][idx];
+function copySelectedItem(platform,index,btn){
+const item=contentData[platform][index];
 const text=platform==='naver'
   ?fixNewlines(item.title)+'\n\n'+fixNewlines(item.content)
   :fixNewlines(typeof item==='string'?item:item.content||'');
@@ -526,44 +540,44 @@ navigator.clipboard.writeText(text).then(()=>{
 });
 }
 
-async function publishInstagram(btn){
-const idx=selected['instagram'];
-if(idx===null)return;
-const item=contentData['instagram'][idx];
+async function publishInstagram(index,btn){
+const item=contentData['instagram'][index];
 const caption=fixNewlines(typeof item==='string'?item:item.content||'');
 btn.textContent='발행 중...';btn.disabled=true;
-// 이미지 URL 구성 (서버에 올라간 첫 번째 사진 사용)
-const imageUrl=imagePaths.length>0?`${window.location.origin}/uploaded/${encodeURIComponent(imagePaths[0].split('/').pop())}`:'';
+// ✅ 서버의 /image/:filename 경로로 사진 URL 구성
+const imageFilename=imagePaths.length>0?imagePaths[0].split('/').pop():'';
+const imageUrl=imageFilename?`${window.location.origin}/image/${encodeURIComponent(imageFilename)}`:'';
+if(!imageUrl){alert('발행할 사진이 없습니다.');btn.textContent='📸 발행';btn.disabled=false;return;}
 try{
-const res=await fetch('/publish-instagram',{
-  method:'POST',
-  headers:{'Content-Type':'application/json'},
-  body:JSON.stringify({type:'photo',url:imageUrl,caption})
-});
-const data=await res.json();
-if(data.success){btn.textContent='✅ 발행완료';btn.classList.add('done');}
-else{alert('발행 오류: '+data.error);btn.textContent='📸 발행';btn.disabled=false;}
+  const res=await fetch('/publish-instagram',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({type:'photo',url:imageUrl,caption})
+  });
+  const data=await res.json();
+  if(data.success){btn.textContent='✅ 발행완료';btn.classList.add('done');}
+  else{alert('발행 오류: '+data.error);btn.textContent='📸 발행';btn.disabled=false;}
 }catch(e){alert('연결 오류');btn.textContent='📸 발행';btn.disabled=false;}
 }
 
 async function publishAll(){
 const btn=document.getElementById('publish-all-btn');
-const selected_platforms=platforms.filter(p=>selected[p.key]!==null);
-if(selected_platforms.length===0)return;
+if(selected.size===0)return;
 btn.disabled=true;btn.textContent='복사 중...';
-// 모든 선택된 플랫폼 텍스트를 합쳐서 클립보드에
 let allText='';
-selected_platforms.forEach(p=>{
-const idx=selected[p.key];
-const item=contentData[p.key][idx];
-const text=p.key==='naver'
-  ?fixNewlines(item.title)+'\n\n'+fixNewlines(item.content)
-  :fixNewlines(typeof item==='string'?item:item.content||'');
-allText+=`\n\n===[ ${p.name} ]===\n\n${text}`;
+[...selected].forEach(key=>{
+  const [platform,...rest]=key.split('-');
+  const index=parseInt(rest[0]);
+  const p=platforms.find(x=>x.key===platform);
+  const item=contentData[platform][index];
+  const text=platform==='naver'
+    ?fixNewlines(item.title)+'\n\n'+fixNewlines(item.content)
+    :fixNewlines(typeof item==='string'?item:item.content||'');
+  allText+=`\n\n===[ ${p.name} · 제안${index+1} ]===\n\n${text}`;
 });
 await navigator.clipboard.writeText(allText.trim());
 btn.textContent='✅ 모두 복사됐어요!';
-setTimeout(()=>{btn.textContent=`🚀 선택한 ${selected_platforms.length}개 콘텐츠 모두 복사하기`;btn.disabled=false;},3000);
+setTimeout(()=>{btn.textContent=`🚀 선택한 ${selected.size}개 모두 복사하기`;btn.disabled=false;},3000);
 }
 
 function publish(){}
